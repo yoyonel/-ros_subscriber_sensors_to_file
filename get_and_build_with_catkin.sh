@@ -1,6 +1,6 @@
 #!/bin/bash
 
-mkdir -p src; cd src
+mkdir -p catkin_src; cd catkin_src
 
 ##################################
 # get the source from GIT remote #
@@ -8,7 +8,11 @@ mkdir -p src; cd src
 if [ -z ${GIT_REMOTE_FOR_ROS_DRIVER+x} ]; then
 	#GIT_REMOTE_FOR_ROS_DRIVER=https://github.com/ros-drivers/velodyne.git
 	#GIT_REMOTE_FOR_ROS_DRIVER=ssh://git@gitlab.dockerforge.ign.fr:10022/li3ds/ros_velodyne.git
-	echo ""
+	
+	catkin_create_pkg subscriber_android_sensors rospy roscpp android_core
+	
+	ln -sfn  $(realpath ../src/subscriber_android_sensors.cpp) subscriber_android_sensors/src
+	ln -sfn $(realpath ../src/CMakeLists.txt) subscriber_android_sensors/.
 fi
 
 #git clone $GIT_REMOTE_FOR_ROS_DRIVER
@@ -29,3 +33,5 @@ ln -s `eval echo $(dirs +1)` src/
 
 catkin_make
 catkin_make install
+
+cd ..
