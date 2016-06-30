@@ -1,5 +1,4 @@
-catkin_ws/
-src/
+catkin_*
 export/
 
 build/
