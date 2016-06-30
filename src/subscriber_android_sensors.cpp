@@ -15,7 +15,27 @@
 #include <boost/archive/binary_iarchive.hpp>
 
 
-// TODO: rajouter l'option binaire/text pour l'enregistrement
+#define MACRO_XSTR(s) MACRO_STR(s)
+#define MACRO_STR(s) #s
+
+#define GET_ROS_PARAM( _param_name_, _param_member_, _default_value_, _priv_nh_, _nh_ )                             \
+    if ( _priv_nh_.getParam ( MACRO_XSTR(_param_name_), _param_member_ ) )                                                \
+    {                                                                                                               \
+        ROS_INFO_STREAM ( MACRO_XSTR(_param_name_) << " is: " << _param_member_);                                         \
+    }                                                                                                               \
+    else if( _nh_.getParam ( MACRO_XSTR(_param_name_), _param_member_ ) )                                                 \
+    {                                                                                                               \
+        ROS_WARN_STREAM ("Non-private " << MACRO_XSTR(_param_name_) << " parameter is DEPRECATED: " << _param_member_);   \
+    }                                                                                                               \
+    else {                                                                                                          \
+        _param_member_ = _default_value_;                                                                           \
+        ROS_INFO_STREAM ( MACRO_XSTR(_param_name_) << " is: " << _param_member_ << "\t[default-value]");                  \
+    }
+
+
+/**
+ * @brief The SensorsToFile class
+ */
 class SensorsToFile {
 protected:
     ros::NodeHandle nh_;
@@ -23,10 +43,14 @@ protected:
 private:
     std::string prefix_;
 
+    bool binary_;
+    bool show_msg_;
+
+
     struct _orientation_stamp_type
     {
         _orientation_stamp_type(const sensor_msgs::ImuConstPtr& _msg) :
-            _stamp(ros::Time::now()), _orientation(_msg->orientation)
+            _stamp(_msg->header.stamp), _orientation(_msg->orientation)
         {}
 
         ros::Time _stamp;
@@ -47,52 +71,96 @@ private:
         }
     };
 
-    std::vector<_orientation_stamp_type> v_orientations;
+    std::vector<_orientation_stamp_type> v_orientations_;
 
 public:
     std::string sensors_topic_;
 
     ros::Subscriber sub_;
 
-    void sensors_cb(const sensor_msgs::ImuConstPtr& _msg)
+    std::string build_filename() const
     {
-        //        ROS_INFO_STREAM("Orientation\n" << _msg->orientation);
-        v_orientations.push_back(_msg);
-        if (v_orientations.size() == v_orientations.capacity())
-        {
-            // TODO: faire une méthode (séparée) pour écrire le vector
-            // On récupère le timestamp du message
-            const ros::Time& stamp_begin = v_orientations.at(0)._stamp;
-            const ros::Time& stamp_end = v_orientations.back()._stamp;
-            // On construit le nom du fichier image par rapport �  ce timestamp
-            std::stringstream ss_sensors_filename;
-            ss_sensors_filename << prefix_ << \
-                                   stamp_begin << "_to_" << stamp_end << \
-                                   ".dat";
+        // On recupere le timestamp du message
+        const ros::Time& stamp_begin = v_orientations_.front()._stamp;
+        const ros::Time& stamp_end = v_orientations_.back()._stamp;
+        // On construit le nom du fichier image par rapport a ce timestamp
+        std::stringstream ss_sensors_filename;
+        ss_sensors_filename << prefix_ <<                               \
+                               stamp_begin << "_to_" << stamp_end <<    \
+                               ".dat";
+        return ss_sensors_filename.str();
+    }
 
-            std::ofstream ofs(ss_sensors_filename.str(), std::ios::out | std::ofstream::binary);
-            if(ofs.is_open()) {
-                // save data to archive
-                try{
-                    //                    boost::archive::text_oarchive oa(ofs);
+    template<typename T, class Archive>
+    static
+    void write_vector_on_archive(const std::vector<T> & _vector, Archive & _ar)
+    {
+        // write vector to archive
+        for (typename std::vector<T>::const_iterator it = _vector.begin() ; it != _vector.end(); ++it)
+            _ar << *it;
+    }
+
+    inline void write_on_archive(boost::archive::binary_oarchive & _ar) const {
+        write_vector_on_archive<_orientation_stamp_type, boost::archive::binary_oarchive>(v_orientations_, _ar);
+    }
+
+    inline void write_on_archive(boost::archive::text_oarchive & _ar) const {
+        write_vector_on_archive<_orientation_stamp_type, boost::archive::text_oarchive>(v_orientations_, _ar);
+    }
+
+    bool write_orientations(const sensor_msgs::ImuConstPtr& _msg)
+    {
+        bool retour = true;
+
+        const std::string filename = build_filename();
+
+        std::ofstream ofs(filename, std::ios::out | std::ofstream::binary);
+        if(ofs.is_open()) {
+            // save data to archive
+            try {
+                if(binary_) {
                     boost::archive::binary_oarchive oa(ofs);
-
-                    // write class instance to archive
-                    for (std::vector<_orientation_stamp_type>::iterator it = v_orientations.begin() ; it != v_orientations.end(); ++it)
-                        oa << *it;
+                    // write vector to archive
+                    write_on_archive(oa);
                     // archive and stream closed when destructors are called
                 }
-                catch(std::exception &exc){
-                    ROS_ERROR_STREAM("Exception lors de la serialization ! -> " << exc.what());
+                else {
+                    boost::archive::text_oarchive oa(ofs);
+                    // write vector to archive
+                    write_on_archive(oa);
+                    // archive and stream closed when destructors are called
                 }
-
-                ROS_INFO_STREAM("Write sensors data into: " << ss_sensors_filename.str());
             }
-            else {
-                ROS_ERROR_STREAM("Probleme d'ouverture du stream: " << ss_sensors_filename.str());
+            catch(std::exception &exc){
+                ROS_ERROR_STREAM("Exception lors de la serialization ! -> " << exc.what());
+                retour = false;
             }
 
-            v_orientations.clear();
+            ROS_INFO_STREAM("Write sensors data into: " << filename);
+        }
+        else {
+            ROS_ERROR_STREAM("Probleme d'ouverture du stream: " << filename);
+            retour = false;
+        }
+
+        return retour;
+    }
+
+    void sensors_cb(const sensor_msgs::ImuConstPtr& _msg)
+    {
+        if (show_msg_)
+            ROS_INFO_STREAM("Orientation\n" << _msg->orientation);
+
+        // Sauvegarde en memoire du message (les informations qui nous interessent du message)
+        v_orientations_.push_back(_msg);
+
+        // Est ce qu'on a atteint la capacite max. du vecteur ?
+        if (v_orientations_.size() == v_orientations_.capacity())
+        {
+            // Si oui, on enregistre (sur fichier) le vecteur
+            write_orientations(_msg);
+            // et on le vide
+            v_orientations_.clear();
         }
     }
 
@@ -100,26 +168,15 @@ public:
     SensorsToFile (ros::NodeHandle _priv_nh = ros::NodeHandle("~"),
                    const uint32_t& _size_buffer=50 )
     {
-        v_orientations.reserve(_size_buffer);
+        v_orientations_.reserve(_size_buffer);
 
-        // Check if a prefix parameter is defined for output file names.
-        if (_priv_nh.getParam ("prefix", prefix_))
-        {
-            ROS_INFO_STREAM (" file prefix is: " << prefix_);
-        }
-        else if (nh_.getParam ("prefix", prefix_))
-        {
-            ROS_WARN_STREAM ("Non-private prefix parameter is DEPRECATED: "
-                             << prefix_);
-        }
-        else {
-            prefix_ = "SENSORS_";
-        }
+        // On recupere les parametres ROS
+        GET_ROS_PARAM(prefix, prefix_, "SENSORS_", _priv_nh, nh_);
+        GET_ROS_PARAM(binary, binary_, true, _priv_nh, nh_);
+        GET_ROS_PARAM(sensors_topic, sensors_topic_, "/android/imu", _priv_nh, nh_);
+        GET_ROS_PARAM(show_msg, show_msg_, false, _priv_nh, nh_);
 
-        // TODO: permettre de spécifier en option/argument le topic �  écouter
-        sensors_topic_ = "/android/imu";
-
-
+        // On lance le subscriber
         sub_ = nh_.subscribe(sensors_topic_, 1, &SensorsToFile::sensors_cb, this);
 
         ROS_INFO ("Listening for incoming data on topic %s",
