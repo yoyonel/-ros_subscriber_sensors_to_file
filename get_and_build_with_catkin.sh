@@ -11,7 +11,8 @@ if [ -z ${GIT_REMOTE_FOR_ROS_DRIVER+x} ]; then
 	
 	catkin_create_pkg subscriber_android_sensors rospy roscpp android_core
 	
-	ln -sfn  $(realpath ../src/subscriber_android_sensors.cpp) subscriber_android_sensors/src
+	ln -sfn $(realpath ../src/subscriber_android_sensors.cpp) subscriber_android_sensors/src
+	ln -sfn $(realpath ../src/subscriber_android_sensors.h) subscriber_android_sensors/src
 	ln -sfn $(realpath ../src/CMakeLists.txt) subscriber_android_sensors/.
 fi
 
